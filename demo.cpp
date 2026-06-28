@@ -9,7 +9,7 @@ using namespace std;
 int main()
 {
     uint8_t flag = 0b00001000;
-    cout<<(1<<3)<<endl;
-    cout<<flag<<endl; 
+    cout<<(flag<<2)<<endl;
+    cout<<(bitset<8>(flag<<2))[2]<<endl; 
 
 }
