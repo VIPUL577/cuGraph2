@@ -26,6 +26,129 @@ TASK #6(FINAL) -> GLUE THEM AND TESTING
 #define THREADSPERBLOCK 256
 
 using namespace std;
+
+//========================================================================================================
+// Helper Functions GPU
+//========================================================================================================
+void cubExclusiveScan(int *d_in, int *d_out, size_t temp_storage_bytes, void *d_temp_storage, int N)
+{ // N-> size of frontier.
+
+    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cudaDeviceSynchronize();
+}
+
+__device__ int degree(int *row_offsets, int vertex, int V, int E)
+{
+    int sub = (vertex == V - 1) ? E : row_offsets[vertex + 1];
+    return sub - row_offsets[vertex];
+}
+__device__ bool ifFrontier(uint32_t *d_pullcurrentF, int vertex)
+{
+    int word = vertex / 32;
+    int bit = vertex % 32;
+    if (d_pullcurrentF[word] & (1u << bit))
+        return true;
+    return false;
+}
+//========================================================================================================
+// Helper Kernels GPU
+//========================================================================================================
+__global__ void getDegree(int *current_frontier, int *row_indices, int *degree_array, int N, int V, int E)
+{ //-> number of vertex in "current fronteir" (N)
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < N)
+        degree_array[idx] = degree(row_indices, current_frontier[idx], V, E);
+}
+__global__ void compute_col_degrees(int *col, int *col_degrees, int E)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < E)
+    {
+        int dst = col[tid];
+        atomicAdd(&col_degrees[dst], 1);
+    }
+}
+__global__ void initZero(int *array, int N)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid < N)
+    {
+        array[tid] = 0;
+    }
+}
+
+__global__ void initZeroBitmap(uint32_t *array, int num_words)
+{
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < num_words)
+        array[idx] = 0;
+}
+__global__ void fill_csc_row_idx(int *col, int *row_indices, int *csc_col_ptr, int *csc_row_idx, int *fill_ptr, int V, int E)
+{
+    int src = blockIdx.x * blockDim.x + threadIdx.x;
+    if (src < V)
+    {
+        int start = row_indices[src];
+        int end = start + degree(row_indices, src, V, E); // reuse your existing device function
+
+        for (int e = start; e < end; e++)
+        {
+            int dst = col[e];
+            int pos = atomicAdd(&fill_ptr[dst], 1);
+            csc_row_idx[pos] = src;
+        }
+    }
+}
+__global__ void generate_frontier_bitmap(int *current_frontier, uint32_t *d_pull_currentF, int V, int cf_n)
+{
+    // launch cf_n
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < cf_n)
+    {
+        int vertex = current_frontier[idx];
+        int word = vertex / 32;
+        int bit = vertex % 32;
+        atomicOr(&d_pull_currentF[word], 1u << bit);
+    }
+}
+__global__ void generate_unvisited_bitmap(uint32_t *visited, int *vkeep, int V)
+{
+    // launch V
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < V)
+    {
+        int word = idx / 32;
+        int bit = idx % 32;
+        vkeep[idx] = !(visited[word] & (1u << bit));
+    }
+}
+__global__ void generate_frontier(int *vkeep, int *prefix_vkeep, int V, int *unvisited_frontier)
+{
+    // launch V
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < V)
+    {
+        if (vkeep[idx])
+        {
+            unvisited_frontier[prefix_vkeep[idx]] = idx;
+        }
+    }
+}
+__global__ void generate_frontier_visited(int *vkeep, int *prefix_vkeep, uint32_t*visited, int V, int *unvisited_frontier)
+{
+    // launch V
+    int idx = blockDim.x * blockIdx.x + threadIdx.x;
+    if (idx < V)
+    {
+        if (vkeep[idx])
+        {
+            atomicOr(&visited[idx/32], (1<<(idx%32))); 
+            unvisited_frontier[prefix_vkeep[idx]] = idx;
+        }
+    }
+}
+
 //========================================================================================================
 // PUSH ADVANCE KERNEL
 //========================================================================================================
@@ -165,109 +288,6 @@ __global__ void compute(int *current_frontier, int *distance, int iteration, int
 }
 
 //========================================================================================================
-// Helper Functions GPU
-//========================================================================================================
-void cubExclusiveScan(int *d_in, int *d_out, size_t temp_storage_bytes, void *d_temp_storage, int N)
-{ // N-> size of frontier.
-
-    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
-    cudaDeviceSynchronize();
-}
-
-__device__ int degree(int *row_offsets, int vertex, int V, int E)
-{
-    int sub = (vertex == V - 1) ? E : row_offsets[vertex + 1];
-    return sub - row_offsets[vertex];
-}
-__device__ bool ifFrontier(uint32_t *d_pullcurrentF, int vertex)
-{
-    int word = vertex / 32;
-    int bit = vertex % 32;
-    if (d_pullcurrentF[word] & (1u << bit))
-        return true;
-    return false;
-}
-//========================================================================================================
-// Helper Kernels GPU
-//========================================================================================================
-__global__ void getDegree(int *current_frontier, int *row_indices, int *degree_array, int N, int V, int E)
-{ //-> number of vertex in "current fronteir" (N)
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx < N)
-        degree_array[idx] = degree(row_indices, current_frontier[idx], V, E);
-}
-__global__ void compute_col_degrees(int *col, int *col_degrees, int E)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid < E)
-    {
-        int dst = col[tid];
-        atomicAdd(&col_degrees[dst], 1);
-    }
-}
-__global__ void initZero(int *array, int N)
-{
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    if (tid < N)
-    {
-        array[tid] = 0;
-    }
-}
-__global__ void fill_csc_row_idx(int *col, int *row_indices, int *csc_col_ptr, int *csc_row_idx, int *fill_ptr, int V, int E)
-{
-    int src = blockIdx.x * blockDim.x + threadIdx.x;
-    if (src < V)
-    {
-        int start = row_indices[src];
-        int end = start + degree(row_indices, src, V, E); // reuse your existing device function
-
-        for (int e = start; e < end; e++)
-        {
-            int dst = col[e];
-            int pos = atomicAdd(&fill_ptr[dst], 1);
-            csc_row_idx[pos] = src;
-        }
-    }
-}
-__global__ void generate_frontier_bitmap(int *current_frontier, uint32_t *d_pull_currentF, int V, int cf_n)
-{
-    // launch cf_n
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx < cf_n)
-    {
-        int vertex = current_frontier[idx];
-        int word = vertex / 32;
-        int bit = vertex % 32;
-        atomicOr(&d_pull_currentF[word], 1u << bit);
-    }
-}
-__global__ void generate_unvisited_bitmap(uint32_t *visited, int *vkeep, int V)
-{
-    // launch V
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx < V)
-    {
-        int word = idx / 32;
-        int bit = idx % 32;
-        vkeep[idx] = !(visited[word] & (1u << bit));
-    }
-}
-__global__ void generate_frontier(int *vkeep, int *prefix_vkeep, int V, int *unvisited_frontier)
-{
-    // launch V
-    int idx = blockDim.x * blockIdx.x + threadIdx.x;
-    if (idx < V)
-    {
-        if (vkeep[idx])
-        {
-            unvisited_frontier[prefix_vkeep[idx]] = idx;
-        }
-    }
-}
-
-
-
-//========================================================================================================
 // Helper Functions CPU
 //========================================================================================================
 int getNumberEdges(int *prefix_sum_in, int *prefix_sum_out, size_t temp_storage_bytes, void *d_temp_storage, int N)
@@ -287,38 +307,48 @@ void input_array(int *array, int n)
         cin >> array[i];
     }
 }
-int advancePush(int *d_current_frontier, int *d_outgoing_frontier, int *d_col, int *d_row_indices, int *d_degree_array, void *d_temp_storage, size_t temp_storage_bytes, int cf_n, int V, int E)
+int advancePush(int *d_current_frontier, int *d_outgoing_frontier, int *d_col, int *d_row_indices, int *d_degree_array,
+                uint32_t *d_visited, int *d_keep, int *d_prekeep, void *d_temp_storage, size_t temp_storage_bytes, int cf_n,
+                int V, int E)
 {
+
     int blocks = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     getDegree<<<blocks, THREADSPERBLOCK>>>(d_current_frontier, d_row_indices, d_degree_array, cf_n, V, E);
     int number_of_edges = getNumberEdges(d_degree_array, d_degree_array, temp_storage_bytes, d_temp_storage, cf_n);
     int totalThreads = (number_of_edges + EDGESPERTHREAD - 1) / EDGESPERTHREAD;
     int grid = (totalThreads + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     Advance_push<<<grid, THREADSPERBLOCK>>>(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, number_of_edges, totalThreads, cf_n);
-
-    return number_of_edges;
+    filterBefore<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, number_of_edges, d_visited, d_keep);
+    cf_n = getNumberEdges(d_keep, d_prekeep, temp_storage_bytes, d_temp_storage, number_of_edges);
+    filterAfter<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, d_current_frontier, number_of_edges, d_prekeep, d_keep);
+    cudaDeviceSynchronize();
+    return cf_n;
 }
-int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier,int *unvisited_frontier,
+int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, int *unvisited_frontier,
                 uint32_t *visited, int *vkeep, int *prefix_vkeep, uint32_t *d_pull_currentF, size_t temp_storage_bytes,
                 void *d_temp_storage, int E, int V, int cf_n)
 {
+    int num_words = (V + 31) / 32;
+    int blocks = (num_words + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
+
+    initZeroBitmap<<<blocks, THREADSPERBLOCK>>>(d_pull_currentF, num_words);
     int blockv = (V + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     generate_unvisited_bitmap<<<blockv, THREADSPERBLOCK>>>(visited, vkeep, V);
     int noUnvisit = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, V);
     generate_frontier<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep, V, unvisited_frontier);
     int block = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     generate_frontier_bitmap<<<block, THREADSPERBLOCK>>>(current_frontier, d_pull_currentF, V, cf_n);
+    block = (noUnvisit + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     getDegree<<<block, THREADSPERBLOCK>>>(unvisited_frontier, d_csc_col_ptr, vkeep, noUnvisit, V, E);
     int number_of_edges = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, noUnvisit);
     initZero<<<blockv, THREADSPERBLOCK>>>(vkeep, V);
-    int tt = (number_of_edges+EDGESPERTHREAD-1)/EDGESPERTHREAD; 
-    int grid = (tt+THREADSPERBLOCK-1)/THREADSPERBLOCK; 
-    Advance_pull<<<grid,THREADSPERBLOCK>>>(unvisited_frontier,prefix_vkeep,vkeep,d_csc_col_ptr,noUnvisit,d_csc_row_idx,d_pull_currentF,V,E,tt,number_of_edges);
-    int finalnumber = getNumberEdges(vkeep,prefix_vkeep,temp_storage_bytes,d_temp_storage,V); 
-    generate_frontier<<<blockv,THREADSPERBLOCK>>>(vkeep,prefix_vkeep,V,unvisited_frontier); 
-
-    return finalnumber; 
-
+    int tt = (number_of_edges + EDGESPERTHREAD - 1) / EDGESPERTHREAD;
+    int grid = (tt + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
+    Advance_pull<<<grid, THREADSPERBLOCK>>>(unvisited_frontier, prefix_vkeep, vkeep, d_csc_col_ptr, noUnvisit, d_csc_row_idx, d_pull_currentF, V, E, tt, number_of_edges);
+    cf_n = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, V);
+    generate_frontier_visited<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep,visited, V, current_frontier);
+    cudaDeviceSynchronize();
+    return cf_n;
 }
 void convert_csr_to_csc(
     int *d_csr_row_indices, int *d_csr_col, // Inputs (CSR)
@@ -394,8 +424,8 @@ int main()
 
     cudaMalloc(&d_row_indices, V * sizeof(int));
     cudaMalloc(&d_col, E * sizeof(int));
-    cudaMalloc(&d_csc_row_idx, V * sizeof(int));
-    cudaMalloc(&d_csc_col_ptr, E * sizeof(int));
+    cudaMalloc(&d_csc_row_idx, E * sizeof(int));
+    cudaMalloc(&d_csc_col_ptr, V * sizeof(int));
     cudaMalloc(&d_distance, V * sizeof(int));
     cudaMalloc(&d_current_frontier, V * sizeof(int));
     cudaMalloc(&d_degree_array, V * sizeof(int));
@@ -442,15 +472,11 @@ int main()
     clock_t starttt = clock();
     while (cf_n > 0)
     {
-        int number_of_edges = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_temp_storage, temp_storage_bytes, cf_n, V, E);
-        int totalThreads = (number_of_edges + EDGESPERTHREAD - 1) / EDGESPERTHREAD;
-        int grid = (totalThreads + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
-        filterBefore<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, number_of_edges, d_visited, d_keep);
-        cf_n = getNumberEdges(d_keep, d_prekeep, temp_storage_bytes, d_temp_storage, number_of_edges);
-        filterAfter<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, d_current_frontier, number_of_edges, d_prekeep, d_keep);
+        // cf_n = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_visited, d_keep, d_prekeep, d_temp_storage, temp_storage_bytes, cf_n, V, E);
+        cf_n = advancePull(d_csc_col_ptr, d_csc_row_idx, d_current_frontier, d_outgoing_frontier, d_visited, d_vkeep, d_vprekeep, d_pull_currentF, temp_storage_bytes, d_temp_storage, E, V, cf_n);
         int blocks = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
         iteration++;
-        // cout<<"ITERATION: "<<iteration<<" cf_n: "<<cf_n<<" Number of edges: "<<number_of_edges<<endl;
+        // cout << "ITERATION: " << iteration << " cf_n: " << cf_n << endl;
         if (blocks > 0)
             compute<<<blocks, THREADSPERBLOCK>>>(d_current_frontier, d_distance, iteration, cf_n);
         cudaDeviceSynchronize();
