@@ -472,8 +472,8 @@ int main()
     clock_t starttt = clock();
     while (cf_n > 0)
     {
-        // cf_n = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_visited, d_keep, d_prekeep, d_temp_storage, temp_storage_bytes, cf_n, V, E);
-        cf_n = advancePull(d_csc_col_ptr, d_csc_row_idx, d_current_frontier, d_outgoing_frontier, d_visited, d_vkeep, d_vprekeep, d_pull_currentF, temp_storage_bytes, d_temp_storage, E, V, cf_n);
+/*[PUSH]*/cf_n = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_visited, d_keep, d_prekeep, d_temp_storage, temp_storage_bytes, cf_n, V, E);
+/*[PULL]*/// cf_n = advancePull(d_csc_col_ptr, d_csc_row_idx, d_current_frontier, d_outgoing_frontier, d_visited, d_vkeep, d_vprekeep, d_pull_currentF, temp_storage_bytes, d_temp_storage, E, V, cf_n);
         int blocks = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
         iteration++;
         // cout << "ITERATION: " << iteration << " cf_n: " << cf_n << endl;
