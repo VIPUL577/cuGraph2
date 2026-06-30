@@ -23,7 +23,7 @@ TASK #6(FINAL) -> GLUE THEM AND TESTING
 #include <cub/cub.cuh> // -> for prefix sum
 
 #define EDGESPERTHREAD 32
-#define THREADSPERBLOCK 256
+#define THREADSPERBLOCK 512
 
 using namespace std;
 
@@ -286,7 +286,10 @@ __global__ void compute(int *current_frontier, int *distance, int iteration, int
         distance[current_frontier[idx]] = iteration;
     }
 }
-
+//========================================================================================================
+// ENACTOR FUNCTION
+//========================================================================================================
+    
 //========================================================================================================
 // Helper Functions CPU
 //========================================================================================================
@@ -330,7 +333,6 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
 {
     int num_words = (V + 31) / 32;
     int blocks = (num_words + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
-
     initZeroBitmap<<<blocks, THREADSPERBLOCK>>>(d_pull_currentF, num_words);
     int blockv = (V + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     generate_unvisited_bitmap<<<blockv, THREADSPERBLOCK>>>(visited, vkeep, V);
@@ -346,8 +348,9 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
     int grid = (tt + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     Advance_pull<<<grid, THREADSPERBLOCK>>>(unvisited_frontier, prefix_vkeep, vkeep, d_csc_col_ptr, noUnvisit, d_csc_row_idx, d_pull_currentF, V, E, tt, number_of_edges);
     cf_n = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, V);
-    generate_frontier_visited<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep,visited, V, current_frontier);
+    generate_frontier_visited<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep,visited,V,current_frontier);
     cudaDeviceSynchronize();
+
     return cf_n;
 }
 void convert_csr_to_csc(
@@ -422,7 +425,9 @@ int main()
     uint32_t *d_visited;
     uint32_t *d_pull_currentF;
 
-    cudaMalloc(&d_row_indices, V * sizeof(int));
+    // O(7V + 5E) -> space complexity 
+
+    cudaMalloc(&d_row_indices, V * sizeof(int));   
     cudaMalloc(&d_col, E * sizeof(int));
     cudaMalloc(&d_csc_row_idx, E * sizeof(int));
     cudaMalloc(&d_csc_col_ptr, V * sizeof(int));
@@ -476,7 +481,6 @@ int main()
 /*[PULL]*/// cf_n = advancePull(d_csc_col_ptr, d_csc_row_idx, d_current_frontier, d_outgoing_frontier, d_visited, d_vkeep, d_vprekeep, d_pull_currentF, temp_storage_bytes, d_temp_storage, E, V, cf_n);
         int blocks = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
         iteration++;
-        // cout << "ITERATION: " << iteration << " cf_n: " << cf_n << endl;
         if (blocks > 0)
             compute<<<blocks, THREADSPERBLOCK>>>(d_current_frontier, d_distance, iteration, cf_n);
         cudaDeviceSynchronize();
@@ -532,7 +536,7 @@ int main()
 */
 
 /*
-300 100 0
+300 100 0 
 61 72 22 1 51 56 35 56 97 27 90 13 58 83 27 74 93 94 53 6 26 18 21 28 32 84 92 4 34 92 46 50 68 29 63 67 95 48 62 63 49 72 3 94 5 55 59 32 53 78 96 10 41 68 70 75 81 14 21 87 90 45 78 93 0 18 19 55 33 92 8 49 88 61 66 88 99 44 56 67 3 64 85 15 78 95 1 20 84 8 51 97 13 24 50 89 16 27 44 25 61 69 60 5 39 57 0 67 91 17 64 65 14 15 75 9 16 36 8 87 59 81 26 52 70 76 94 2 46 76 82 98 40 58 62 87 2 12 18 2 10 29 26 42 85 13 19 51 56 59 63 7 38 43 95 35 15 16 25 55 9 70 11 24 65 41 86 17 29 51 92 23 56 45 61 83 88 15 25 31 33 79 89 39 64 73 79 81 83 95 20 58 75 3 45 7 16 57 68 69 2 33 46 53 67 79 91 38 65 71 9 19 47 69 42 16 35 85 3 7 25 50 61 80 89 24 96 46 18 41 60 79 0 28 44 46 65 0 3 48 64 72 81 47 83 43 21 42 1 11 73 97 50 44 46 74 78 8 28 30 45 94 34 57 20 65 69 98 33 39 54 2 53 95 57 82 96 15 40 83 3 82 29 65 17 97 37 8 24 77 12 28 36 66 13 19 23 64 84 87
 0 2 3 6 9 10 11 14 18 19 21 27 30 33 37 40 42 44 47 51 57 61 64 68 70 73 77 80 83 86 89 92 96 99 102 103 106 109 112 114 115 118 120 122 127 132 136 139 140 142 145 151 155 156 160 162 165 167 171 173 177 183 190 193 195 198 200 207 210 214 215 218 224 225 227 228 230 232 237 243 245 246 248 252 253 257 260 262 264 268 271 274 277 280 282 284 286 287 290 294 300
 */
