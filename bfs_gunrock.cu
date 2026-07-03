@@ -11,6 +11,13 @@ TASK #4 -> FILTER -> 1-1.5 hrs max -> done
 TASK #5 -> COMPUTE -> 15 mins max -> done
 TASK #6(FINAL) -> GLUE THEM AND TESTING
 
+TASK #7 -> FIGURE OUT A WAY TO GET NUMBER OF EDGES WITHOUT EXTRA WORK. -> ans is prediction as in real gunrock
+TASK #8 -> ENACTOR FUNTION. ->
+TASK #9 -> USE STREAMS TO OPTIMIZE ->
+
+Tomorrow.... 6 AM in Ajanta till 1PM please send the sheet, 2PM se 1AM CP grind
+
+ALL THE CODE SHOULD BE COMPLETED BY TODAY (01/07/2026) BY 9PM.
 
 */
 #include <time.h>
@@ -24,6 +31,14 @@ TASK #6(FINAL) -> GLUE THEM AND TESTING
 
 #define EDGESPERTHREAD 32
 #define THREADSPERBLOCK 512
+#define DIRECTION_OPTIMIZED false
+#define ALPHA 0.1
+#define BETA 0.01
+enum DIRECTION
+{
+    PUSH,
+    PULL
+};
 
 using namespace std;
 
@@ -135,7 +150,7 @@ __global__ void generate_frontier(int *vkeep, int *prefix_vkeep, int V, int *unv
         }
     }
 }
-__global__ void generate_frontier_visited(int *vkeep, int *prefix_vkeep, uint32_t*visited, int V, int *unvisited_frontier)
+__global__ void generate_frontier_visited(int *vkeep, int *prefix_vkeep, uint32_t *visited, int V, int *unvisited_frontier)
 {
     // launch V
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
@@ -143,7 +158,7 @@ __global__ void generate_frontier_visited(int *vkeep, int *prefix_vkeep, uint32_
     {
         if (vkeep[idx])
         {
-            atomicOr(&visited[idx/32], (1<<(idx%32))); 
+            atomicOr(&visited[idx / 32], (1 << (idx % 32)));
             unvisited_frontier[prefix_vkeep[idx]] = idx;
         }
     }
@@ -286,10 +301,7 @@ __global__ void compute(int *current_frontier, int *distance, int iteration, int
         distance[current_frontier[idx]] = iteration;
     }
 }
-//========================================================================================================
-// ENACTOR FUNCTION
-//========================================================================================================
-    
+
 //========================================================================================================
 // Helper Functions CPU
 //========================================================================================================
@@ -310,6 +322,7 @@ void input_array(int *array, int n)
         cin >> array[i];
     }
 }
+
 int advancePush(int *d_current_frontier, int *d_outgoing_frontier, int *d_col, int *d_row_indices, int *d_degree_array,
                 uint32_t *d_visited, int *d_keep, int *d_prekeep, void *d_temp_storage, size_t temp_storage_bytes, int cf_n,
                 int V, int E)
@@ -333,13 +346,13 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
 {
     int num_words = (V + 31) / 32;
     int blocks = (num_words + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
-    initZeroBitmap<<<blocks, THREADSPERBLOCK>>>(d_pull_currentF, num_words);
+    initZeroBitmap<<<blocks, THREADSPERBLOCK>>>(d_pull_currentF, num_words); // ##
     int blockv = (V + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     generate_unvisited_bitmap<<<blockv, THREADSPERBLOCK>>>(visited, vkeep, V);
     int noUnvisit = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, V);
     generate_frontier<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep, V, unvisited_frontier);
     int block = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
-    generate_frontier_bitmap<<<block, THREADSPERBLOCK>>>(current_frontier, d_pull_currentF, V, cf_n);
+    generate_frontier_bitmap<<<block, THREADSPERBLOCK>>>(current_frontier, d_pull_currentF, V, cf_n); // ##
     block = (noUnvisit + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     getDegree<<<block, THREADSPERBLOCK>>>(unvisited_frontier, d_csc_col_ptr, vkeep, noUnvisit, V, E);
     int number_of_edges = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, noUnvisit);
@@ -348,7 +361,7 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
     int grid = (tt + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     Advance_pull<<<grid, THREADSPERBLOCK>>>(unvisited_frontier, prefix_vkeep, vkeep, d_csc_col_ptr, noUnvisit, d_csc_row_idx, d_pull_currentF, V, E, tt, number_of_edges);
     cf_n = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, V);
-    generate_frontier_visited<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep,visited,V,current_frontier);
+    generate_frontier_visited<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep, visited, V, current_frontier);
     cudaDeviceSynchronize();
 
     return cf_n;
@@ -399,6 +412,7 @@ int main()
     int *h_degree_array = new int[V];
     int iteration = 0;
     uint32_t *visited = new uint32_t[(V + 31) / 32]();
+    DIRECTION direction = PUSH;
 
     input_array(h_col, E);
     input_array(h_row_indices, V);
@@ -425,9 +439,9 @@ int main()
     uint32_t *d_visited;
     uint32_t *d_pull_currentF;
 
-    // O(7V + 5E) -> space complexity 
+    // O(7V + 5E) -> space complexity
 
-    cudaMalloc(&d_row_indices, V * sizeof(int));   
+    cudaMalloc(&d_row_indices, V * sizeof(int));
     cudaMalloc(&d_col, E * sizeof(int));
     cudaMalloc(&d_csc_row_idx, E * sizeof(int));
     cudaMalloc(&d_csc_col_ptr, V * sizeof(int));
@@ -471,19 +485,60 @@ int main()
     void *d_temp_storage = nullptr;
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
     convert_csr_to_csc(d_row_indices, d_col, d_csc_col_ptr, d_csc_row_idx, d_temp_storage, temp_storage_bytes, V, E);
+    double m_f, m_u;
+    int numberVisited = 0, unvisited;
     //==========================================================
     // Workflow
     //==========================================================
     clock_t starttt = clock();
     while (cf_n > 0)
     {
-/*[PUSH]*/cf_n = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_visited, d_keep, d_prekeep, d_temp_storage, temp_storage_bytes, cf_n, V, E);
-/*[PULL]*/// cf_n = advancePull(d_csc_col_ptr, d_csc_row_idx, d_current_frontier, d_outgoing_frontier, d_visited, d_vkeep, d_vprekeep, d_pull_currentF, temp_storage_bytes, d_temp_storage, E, V, cf_n);
+
+        numberVisited += cf_n;
+        unvisited = V - numberVisited; // number of unvisited frontier.
+
+        m_f = cf_n * ((double)E / V);                                                     // number of edges in the current frontier (number of edges to check in averge) for push operation;
+        m_u = (numberVisited == 0) ? INT_MAX : (unvisited * ((double)V / numberVisited)); // avg number to check in pull operation
+
+        // prev = cf_n;
+        if (DIRECTION_OPTIMIZED)
+        {
+            if (direction == PUSH)
+            {
+                if (m_f > m_u * ALPHA)
+                {
+                    cout << "[PULL]" << endl;
+                    direction = PULL;
+                }
+                else
+                    direction = PUSH;
+            }
+            else if (direction == PULL)
+            {
+                if (m_f < m_u * BETA)
+                {
+                    cout << "[PUSH]" << endl;
+                    direction = PUSH;
+                }
+                else
+                    direction = PULL;
+            }
+        }
+
+        if (direction == PUSH)
+        {
+            cf_n = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_visited, d_keep, d_prekeep, d_temp_storage, temp_storage_bytes, cf_n, V, E);
+        }
+        else if (direction == PULL)
+        {
+            cf_n = advancePull(d_csc_col_ptr, d_csc_row_idx, d_current_frontier, d_outgoing_frontier, d_visited, d_vkeep, d_vprekeep, d_pull_currentF, temp_storage_bytes, d_temp_storage, E, V, cf_n);
+        }
         int blocks = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
         iteration++;
         if (blocks > 0)
             compute<<<blocks, THREADSPERBLOCK>>>(d_current_frontier, d_distance, iteration, cf_n);
         cudaDeviceSynchronize();
+        // numberVisited += prev;
     }
 
     clock_t enddd = clock();
@@ -536,13 +591,19 @@ int main()
 */
 
 /*
-300 100 0 
+300 100 10
 61 72 22 1 51 56 35 56 97 27 90 13 58 83 27 74 93 94 53 6 26 18 21 28 32 84 92 4 34 92 46 50 68 29 63 67 95 48 62 63 49 72 3 94 5 55 59 32 53 78 96 10 41 68 70 75 81 14 21 87 90 45 78 93 0 18 19 55 33 92 8 49 88 61 66 88 99 44 56 67 3 64 85 15 78 95 1 20 84 8 51 97 13 24 50 89 16 27 44 25 61 69 60 5 39 57 0 67 91 17 64 65 14 15 75 9 16 36 8 87 59 81 26 52 70 76 94 2 46 76 82 98 40 58 62 87 2 12 18 2 10 29 26 42 85 13 19 51 56 59 63 7 38 43 95 35 15 16 25 55 9 70 11 24 65 41 86 17 29 51 92 23 56 45 61 83 88 15 25 31 33 79 89 39 64 73 79 81 83 95 20 58 75 3 45 7 16 57 68 69 2 33 46 53 67 79 91 38 65 71 9 19 47 69 42 16 35 85 3 7 25 50 61 80 89 24 96 46 18 41 60 79 0 28 44 46 65 0 3 48 64 72 81 47 83 43 21 42 1 11 73 97 50 44 46 74 78 8 28 30 45 94 34 57 20 65 69 98 33 39 54 2 53 95 57 82 96 15 40 83 3 82 29 65 17 97 37 8 24 77 12 28 36 66 13 19 23 64 84 87
 0 2 3 6 9 10 11 14 18 19 21 27 30 33 37 40 42 44 47 51 57 61 64 68 70 73 77 80 83 86 89 92 96 99 102 103 106 109 112 114 115 118 120 122 127 132 136 139 140 142 145 151 155 156 160 162 165 167 171 173 177 183 190 193 195 198 200 207 210 214 215 218 224 225 227 228 230 232 237 243 245 246 248 252 253 257 260 262 264 268 271 274 277 280 282 284 286 287 290 294 300
 */
 
 /*
-49 50 0
+49 50 10
 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49
 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 49
+*/
+
+/*
+20 10 8
+1 2 5 0 3 3 4 5 6 7 2 6 8 7 9 8 9 0 1 4
+0 3 5 7 10 11 13 15 16 18
 */
