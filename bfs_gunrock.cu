@@ -28,7 +28,6 @@ ALL THE CODE SHOULD BE COMPLETED BY TODAY (01/07/2026) BY 9PM.
 #include <bits/stdc++.h>
 #include <iostream>
 #include <cub/cub.cuh> // -> for prefix sum
-
 #define EDGESPERTHREAD 32
 #define THREADSPERBLOCK 512
 #define DIRECTION_OPTIMIZED true
@@ -578,11 +577,15 @@ int main()
                V * sizeof(int),
                cudaMemcpyDeviceToHost);
 
-    cout << "Distance Array:\n";
+    cout << "Distance Array 1st 20:\n";
 
-    for (int i = 0; i < 15; i++)
+    for (int i = 0; i < 20; i++)
         cout << h_distance[i] << " ";
 
+    cout << "\nDistance Array last 20:\n";
+
+    for (int i = V-21; i < V; i++)
+        cout << h_distance[i] << " ";
     cout << endl;
 
     //==========================================================
@@ -635,4 +638,8 @@ int main()
 
 
 // the bugs were 1 instead of 1u -> even in my lifetime, i wouldn't have figured it out. 
-// grid size error in push  
+// grid size error in push 
+// CUB space error
+//// idk if they were proper or not
+// floor issue 
+// 0 degree error
