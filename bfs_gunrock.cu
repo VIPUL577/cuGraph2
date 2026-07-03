@@ -158,7 +158,7 @@ __global__ void generate_frontier_visited(int *vkeep, int *prefix_vkeep, uint32_
     {
         if (vkeep[idx])
         {
-            atomicOr(&visited[idx / 32], (1 << (idx % 32)));
+            atomicOr(&visited[idx / 32], (1u << (idx % 32))); //  'u' was a BUG....
             unvisited_frontier[prefix_vkeep[idx]] = idx;
         }
     }
@@ -203,13 +203,18 @@ __global__ void Advance_push(int *current_frontier,
             counter++;
             if (counter >= degree - offset)
             {
-
                 bstart++;
+                while (bstart < N)
+                {
+                    int np = (bstart + 1 < N) ? prefix_sum[bstart + 1] : edges;
+                    degree = np - prefix_sum[bstart];
+                    if (degree > 0)
+                        break;
+                    bstart++;
+                }
                 if (bstart >= N)
                     break;
                 colIndex = row_indices[current_frontier[bstart]];
-                int np = (bstart + 1 < N) ? prefix_sum[bstart + 1] : edges;
-                degree = np - prefix_sum[bstart];
                 counter = 0;
                 offset = 0;
             }
@@ -261,10 +266,16 @@ __global__ void Advance_pull(int *unvisited_frontier, int *prefix_sum,
                 if (counter >= degree - offset)
                 {
                     left++;
+                    while (left < unvisited)
+                    {
+                        ps = (left + 1 >= unvisited) ? number_of_edges : prefix_sum[left + 1];
+                        degree = ps - prefix_sum[left];
+                        if (degree > 0)
+                            break;
+                        left++;
+                    }
                     if (left >= unvisited)
                         break;
-                    ps = (left + 1 >= unvisited) ? number_of_edges : prefix_sum[left + 1];
-                    degree = ps - prefix_sum[left];
                     dst = unvisited_frontier[left];
                     rowIdx = d_csc_col_ptr[dst];
                     offset = 0;
@@ -344,6 +355,7 @@ int advancePush(int *d_current_frontier, int *d_outgoing_frontier, int *d_col, i
     int totalThreads = (number_of_edges + EDGESPERTHREAD - 1) / EDGESPERTHREAD;
     int grid = (totalThreads + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     Advance_push<<<grid, THREADSPERBLOCK>>>(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, number_of_edges, totalThreads, cf_n);
+    grid = (number_of_edges+THREADSPERBLOCK-1)/THREADSPERBLOCK; 
     filterBefore<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, number_of_edges, d_visited, d_keep);
     cf_n = getNumberEdges(d_keep, d_prekeep, temp_storage_bytes, d_temp_storage, number_of_edges);
     filterAfter<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, d_current_frontier, number_of_edges, d_prekeep, d_keep);
@@ -486,12 +498,14 @@ int main()
 
     size_t temp_storage_bytes = 0;
 
+    int max_scan_size = (V > E) ? V : E;
+
     cub::DeviceScan::ExclusiveSum(
         nullptr,
         temp_storage_bytes,
-        d_degree_array,
-        d_degree_array,
-        V);
+        d_keep, // using d_keep just to provide a valid pointer
+        d_prekeep,
+        max_scan_size);
 
     void *d_temp_storage = nullptr;
     cudaMalloc(&d_temp_storage, temp_storage_bytes);
@@ -566,7 +580,7 @@ int main()
 
     cout << "Distance Array:\n";
 
-    for (int i = 0; i < V; i++)
+    for (int i = 0; i < 15; i++)
         cout << h_distance[i] << " ";
 
     cout << endl;
@@ -618,3 +632,7 @@ int main()
 1 2 5 0 3 3 4 5 6 7 2 6 8 7 9 8 9 0 1 4
 0 3 5 7 10 11 13 15 16 18
 */
+
+
+// the bugs were 1 instead of 1u -> even in my lifetime, i wouldn't have figured it out. 
+// grid size error in push  
