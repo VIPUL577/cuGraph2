@@ -31,7 +31,7 @@ ALL THE CODE SHOULD BE COMPLETED BY TODAY (01/07/2026) BY 9PM.
 
 #define EDGESPERTHREAD 32
 #define THREADSPERBLOCK 512
-#define DIRECTION_OPTIMIZED false
+#define DIRECTION_OPTIMIZED true
 #define ALPHA 0.05
 #define BETA 0.01
 enum DIRECTION
@@ -177,8 +177,9 @@ __global__ void Advance_push(int *current_frontier,
     int idx = blockDim.x * blockIdx.x + threadIdx.x;
     if (idx < nothreads)
     {
-        int start = floor(idx * ((double)edges / nothreads));
-        int end = floor((idx + 1) * ((double)edges / nothreads));
+        // Advance_push — same fix, using edges/nothreads
+        int start = (idx == 0) ? 0 : (int)floor(idx * ((double)edges / nothreads));
+        int end = (idx == nothreads - 1) ? edges : (int)floor((idx + 1) * ((double)edges / nothreads));
         int bstart = 0;
         int benf = N - 1;
         while (benf > bstart)
@@ -202,7 +203,10 @@ __global__ void Advance_push(int *current_frontier,
             counter++;
             if (counter >= degree - offset)
             {
+
                 bstart++;
+                if (bstart >= N)
+                    break;
                 colIndex = row_indices[current_frontier[bstart]];
                 int np = (bstart + 1 < N) ? prefix_sum[bstart + 1] : edges;
                 degree = np - prefix_sum[bstart];
@@ -227,8 +231,9 @@ __global__ void Advance_pull(int *unvisited_frontier, int *prefix_sum,
     {
         int left = 0;
         int right = unvisited - 1;
-        int start = floor(idx * ((double)number_of_edges / nothreads));
-        int end = floor((idx + 1) * ((double)number_of_edges / nothreads));
+        // Advance_pull
+        int start = (idx == 0) ? 0 : (int)floor(idx * ((double)number_of_edges / nothreads));
+        int end = (idx == nothreads - 1) ? number_of_edges : (int)floor((idx + 1) * ((double)number_of_edges / nothreads));
 
         while (right > left)
         {
@@ -238,28 +243,33 @@ __global__ void Advance_pull(int *unvisited_frontier, int *prefix_sum,
             else
                 right = mid - 1;
         }
-        int offset = start - prefix_sum[left];
-        int rowIdx = d_csc_col_ptr[unvisited_frontier[left]] + offset;
-        int dst = unvisited_frontier[left];
-        int ps = (left + 1 >= unvisited) ? number_of_edges : prefix_sum[left + 1];
-        int degree = ps - prefix_sum[left];
-        int counter = 0;
-        for (int i = start; i < end; i++)
+        if (left <= unvisited - 1)
         {
-            int vertex = d_csc_row_idx[rowIdx];
-            if (ifFrontier(d_pullcurrentF, vertex))
-                vkeep2[dst] = 1;
-            rowIdx++;
-            counter++;
-            if (counter >= degree - offset)
+            int offset = start - prefix_sum[left];
+            int rowIdx = d_csc_col_ptr[unvisited_frontier[left]] + offset;
+            int dst = unvisited_frontier[left];
+            int ps = (left + 1 >= unvisited) ? number_of_edges : prefix_sum[left + 1];
+            int degree = ps - prefix_sum[left];
+            int counter = 0;
+            for (int i = start; i < end; i++)
             {
-                left++;
-                ps = (left + 1 >= unvisited) ? number_of_edges : prefix_sum[left + 1];
-                degree = ps - prefix_sum[left];
-                dst = unvisited_frontier[left];
-                rowIdx = d_csc_col_ptr[dst];
-                offset = 0;
-                counter = 0;
+                int vertex = d_csc_row_idx[rowIdx];
+                if (ifFrontier(d_pullcurrentF, vertex))
+                    vkeep2[dst] = 1;
+                rowIdx++;
+                counter++;
+                if (counter >= degree - offset)
+                {
+                    left++;
+                    if (left >= unvisited)
+                        break;
+                    ps = (left + 1 >= unvisited) ? number_of_edges : prefix_sum[left + 1];
+                    degree = ps - prefix_sum[left];
+                    dst = unvisited_frontier[left];
+                    rowIdx = d_csc_col_ptr[dst];
+                    offset = 0;
+                    counter = 0;
+                }
             }
         }
     } // left ka bound check not there , can be a thing;
@@ -413,14 +423,14 @@ int main()
     int iteration = 0;
     uint32_t *visited = new uint32_t[(V + 31) / 32]();
     DIRECTION direction = PUSH;
-    memset(h_distance,-1,V*sizeof(int)); 
+    memset(h_distance, -1, V * sizeof(int));
     input_array(h_col, E);
     input_array(h_row_indices, V);
 
     // Initial frontier = source
     int cf_n = 1;
     h_current_frontier[0] = Source_node;
-    h_distance[Source_node] = 0 ; 
+    h_distance[Source_node] = 0;
     visited[Source_node / 32] |= 1u << (Source_node % 32);
 
     // ---------------- GPU ----------------
@@ -440,7 +450,7 @@ int main()
     uint32_t *d_visited;
     uint32_t *d_pull_currentF;
 
-    // O(7V + 5E) -> space complexity on DRAM. 
+    // O(7V + 5E) -> space complexity on DRAM.
 
     cudaMalloc(&d_row_indices, V * sizeof(int));
     cudaMalloc(&d_col, E * sizeof(int));
@@ -554,7 +564,7 @@ int main()
                V * sizeof(int),
                cudaMemcpyDeviceToHost);
 
-    cout << "Outgoing Frontier:\n";
+    cout << "Distance Array:\n";
 
     for (int i = 0; i < V; i++)
         cout << h_distance[i] << " ";
@@ -604,7 +614,7 @@ int main()
 */
 
 /*
-20 10 8
+20 10 0
 1 2 5 0 3 3 4 5 6 7 2 6 8 7 9 8 9 0 1 4
 0 3 5 7 10 11 13 15 16 18
 */
