@@ -29,7 +29,7 @@ ALL THE CODE SHOULD BE COMPLETED BY TODAY (01/07/2026) BY 9PM.
 #include <iostream>
 #include <cub/cub.cuh> // -> for prefix sum
 #define EDGESPERTHREAD 32
-#define THREADSPERBLOCK 512
+#define THREADSPERBLOCK 128
 #define DIRECTION_OPTIMIZED true
 #define ALPHA 0.05
 #define BETA 0.01
@@ -491,6 +491,7 @@ int main()
     cudaMemcpy(d_current_frontier, h_current_frontier, cf_n * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_visited, visited, ((V + 31) / 32) * sizeof(uint32_t), cudaMemcpyHostToDevice);
 
+    // cudaStream_t()
     //==========================================================
     // Allocate CUB temporary storage ONCE
     //==========================================================
