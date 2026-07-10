@@ -13,7 +13,7 @@ FOR PULL MODE.
 #include <cub/cub.cuh> // -> for prefix sum
 #define EDGESPERTHREAD 4
 #define THREADSPERBLOCK 128
-#define DIRECTION_OPTIMIZED false
+#define DIRECTION_OPTIMIZED true
 #define ALPHA 0.05
 #define BETA 0.01
 enum DIRECTION
@@ -160,6 +160,7 @@ __global__ void Advance_push(int *current_frontier,
     if (idx < nothreads)
     {
         // Advance_push — same fix, using edges/nothreads
+        __shared__ int localOutgoingFrontier[EDGESPERTHREAD*THREADSPERBLOCK]; 
         int start = (idx == 0) ? 0 : (int)floor(idx * ((double)edges / nothreads));
         int end = (idx == nothreads - 1) ? edges : (int)floor((idx + 1) * ((double)edges / nothreads));
         int bstart = 0;
@@ -178,11 +179,13 @@ __global__ void Advance_push(int *current_frontier,
         int degree = next_ps - prefix_sum[bstart];
         int colIndex = row_indices[current_frontier[bstart]] + offset;
         int counter = 0;
+        int counter2 = 0 ; 
         for (int i = start; i < end; i++)
         {
-            outgoing_frontier[i] = col[colIndex];
+            localOutgoingFrontier[threadIdx.x*EDGESPERTHREAD + counter2] = col[colIndex];
             colIndex++;
             counter++;
+            counter2++; 
             if (counter >= degree - offset)
             {
                 bstart++;
@@ -201,9 +204,14 @@ __global__ void Advance_push(int *current_frontier,
                 offset = 0;
             }
         }
+        __syncthreads(); 
+        counter2 = 0 ; 
+        for(int i = start ; i<end; i++){
+            outgoing_frontier[i] = localOutgoingFrontier[threadIdx.x*EDGESPERTHREAD + counter2]; 
+            counter2++;
+        }
     }
 }
-
 //========================================================================================================
 // PULL ADVANCE KERNEL
 //========================================================================================================
@@ -504,7 +512,6 @@ int main()
 
         numberVisited += cf_n;
         unvisited = V - numberVisited; // number of unvisited frontier.
-        cout<<"#############"<<cf_n<<"###############"<<endl; 
         m_f = cf_n * ((double)E / V);                                                     // number of edges in the current frontier (number of edges to check in averge) for push operation;
         m_u = (numberVisited == 0) ? INT_MAX : (unvisited * ((double)V / numberVisited)); // avg number to check in pull operation
 
