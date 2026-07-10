@@ -11,9 +11,9 @@ FOR PULL MODE.
 #include <bits/stdc++.h>
 #include <iostream>
 #include <cub/cub.cuh> // -> for prefix sum
-#define EDGESPERTHREAD 32
+#define EDGESPERTHREAD 4
 #define THREADSPERBLOCK 128
-#define DIRECTION_OPTIMIZED true
+#define DIRECTION_OPTIMIZED false
 #define ALPHA 0.05
 #define BETA 0.01
 enum DIRECTION
@@ -265,7 +265,7 @@ __global__ void Advance_pull(int *unvisited_frontier, int *prefix_sum,
                 }
             }
         }
-    } // left ka bound check not there , can be a thing;
+    } 
 }
 //========================================================================================================
 // FILTER KERNEL
@@ -504,7 +504,7 @@ int main()
 
         numberVisited += cf_n;
         unvisited = V - numberVisited; // number of unvisited frontier.
-
+        cout<<"#############"<<cf_n<<"###############"<<endl; 
         m_f = cf_n * ((double)E / V);                                                     // number of edges in the current frontier (number of edges to check in averge) for push operation;
         m_u = (numberVisited == 0) ? INT_MAX : (unvisited * ((double)V / numberVisited)); // avg number to check in pull operation
 
@@ -627,3 +627,9 @@ int main()
 //// idk if they were proper or not
 // floor issue 
 // 0 degree error
+
+
+/*
+Optimization 1: In Push filterBefore generate_unvisited_bitmap getDegree , instead of writing directly into the outgoing forntier, we can first push to __shared__memory and then to global. (i hope you remeber your convulution optimization)
+Optimization 2: Memory coalesing. I think it will require pre scanning.     
+*/
