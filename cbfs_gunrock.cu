@@ -12,7 +12,7 @@ FOR PULL MODE.
 #include <iostream>
 #include <cub/cub.cuh> // -> for prefix sum
 #define EDGESPERTHREAD 4
-#define THREADSPERBLOCK 256
+#define THREADSPERBLOCK 128
 #define DIRECTION_OPTIMIZED true
 #define ALPHA 0.05
 #define BETA 0.01
@@ -27,6 +27,13 @@ using namespace std;
 //========================================================================================================
 // Helper Functions GPU
 //========================================================================================================
+void cubExclusiveScan(int *d_in, int *d_out, size_t temp_storage_bytes, void *d_temp_storage, int N)
+{ // N-> size of frontier.
+
+    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
+    cudaDeviceSynchronize();
+}
+
 __device__ int degree(int *row_offsets, int vertex, int V, int E)
 {
     int sub = (vertex == V - 1) ? E : row_offsets[vertex + 1];
@@ -56,13 +63,6 @@ __global__ void compute_col_degrees(int *col, int *col_degrees, int E)
     {
         int dst = col[tid];
         atomicAdd(&col_degrees[dst], 1);
-    }
-}
-__global__ void getKeys(int * frontier, int * row_indeces, int * keys , int cf_n){
-    //launch -> cf_n
-    int idx = threadIdx.x*blockIdx.x + blockDim.x ;
-    if(idx<cf_n){
-        keys[idx] = row_indeces[frontier[idx]] ; 
     }
 }
 __global__ void initZero(int *array, int N)
@@ -145,23 +145,7 @@ __global__ void generate_frontier_visited(int *vkeep, int *prefix_vkeep, uint32_
         }
     }
 }
-//========================================================================================================
-// HELPER CUB FUNCTIONS
-//========================================================================================================
 
-void cubExclusiveScan(int *d_in, int *d_out, size_t temp_storage_bytes, void *d_temp_storage, int N)
-{ // N-> size of frontier.
-
-    cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
-    cudaDeviceSynchronize();
-}
-void sortSpatialLocality(int* frontier,int* row_indices, int* vkeep,int* vprekeep,int* ogfrontier, size_t temp_storage_bytes, void *d_temp_storage, int cf_n ){
-    int block = (cf_n + THREADSPERBLOCK - 1)/THREADSPERBLOCK; 
-    getKeys<<<block,THREADSPERBLOCK>>>(frontier,row_indices,vkeep,cf_n); 
-    cub::DeviceRadixSort::SortPairs(d_temp_storage,temp_storage_bytes,vkeep,vprekeep,frontier,ogfrontier,cf_n,0,sizeof(int)*8); 
-    swap(frontier,ogfrontier); 
-    cudaDeviceSynchronize(); 
-}
 //========================================================================================================
 // PUSH ADVANCE KERNEL
 //========================================================================================================
@@ -372,7 +356,6 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
                 uint32_t *visited, int *vkeep, int *prefix_vkeep, uint32_t *d_pull_currentF, size_t temp_storage_bytes,
                 void *d_temp_storage, int E, int V, int cf_n)
 {
-    
     int num_words = (V + 31) / 32;
     int blocks = (num_words + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     initZeroBitmap<<<blocks, THREADSPERBLOCK>>>(d_pull_currentF, num_words); // ##
@@ -382,7 +365,6 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
     generate_frontier<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep, V, unvisited_frontier);
     int block = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     generate_frontier_bitmap<<<block, THREADSPERBLOCK>>>(current_frontier, d_pull_currentF, V, cf_n); // ##
-    // sortSpatialLocality(unvisited_frontier,d_csc_col_ptr,vkeep,prefix_vkeep,current_frontier,temp_storage_bytes,d_temp_storage,cf_n); 
     block = (noUnvisit + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     getDegree<<<block, THREADSPERBLOCK>>>(unvisited_frontier, d_csc_col_ptr, vkeep, noUnvisit, V, E);
     int number_of_edges = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, noUnvisit);
@@ -413,6 +395,7 @@ void convert_csr_to_csc(
     cudaMemset(d_col_degrees, 0, V * sizeof(int));
 
     compute_col_degrees<<<blocks_E, THREADSPERBLOCK>>>(d_csr_col, d_col_degrees, E);
+    cudaDeviceSynchronize();
 
     cubExclusiveScan(d_col_degrees, d_csc_col_ptr, temp_storage_bytes, d_temp_storage, V);
 
@@ -499,6 +482,7 @@ int main()
     cudaMemcpy(d_current_frontier, h_current_frontier, cf_n * sizeof(int), cudaMemcpyHostToDevice);
     cudaMemcpy(d_visited, visited, ((V + 31) / 32) * sizeof(uint32_t), cudaMemcpyHostToDevice);
 
+    // cudaStream_t()
     //==========================================================
     // Allocate CUB temporary storage ONCE
     //==========================================================
@@ -519,14 +503,13 @@ int main()
     convert_csr_to_csc(d_row_indices, d_col, d_csc_col_ptr, d_csc_row_idx, d_temp_storage, temp_storage_bytes, V, E);
     double m_f, m_u;
     int numberVisited = 0, unvisited;
-
     //==========================================================
     // Workflow
     //==========================================================
-
     clock_t starttt = clock();
     while (cf_n > 0)
     {
+
         numberVisited += cf_n;
         unvisited = V - numberVisited; // number of unvisited frontier.
         m_f = cf_n * ((double)E / V);                                                     // number of edges in the current frontier (number of edges to check in averge) for push operation;
@@ -559,7 +542,6 @@ int main()
 
         if (direction == PUSH)
         {
-            // sortSpatialLocality(d_current_frontier,d_row_indices,d_vkeep,d_vprekeep,d_outgoing_frontier,temp_storage_bytes,d_temp_storage,cf_n); 
             cf_n = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_visited, d_keep, d_prekeep, d_temp_storage, temp_storage_bytes, cf_n, V, E);
         }
         else if (direction == PULL)
