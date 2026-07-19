@@ -58,11 +58,13 @@ __global__ void compute_col_degrees(int *col, int *col_degrees, int E)
         atomicAdd(&col_degrees[dst], 1);
     }
 }
-__global__ void getKeys(int * frontier, int * row_indeces, int * keys , int cf_n){
-    //launch -> cf_n
-    int idx = threadIdx.x*blockIdx.x + blockDim.x ;
-    if(idx<cf_n){
-        keys[idx] = row_indeces[frontier[idx]] ; 
+__global__ void getKeys(int *frontier, int *row_indeces, int *keys, int cf_n)
+{
+    // launch -> cf_n
+    int idx = threadIdx.x * blockIdx.x + blockDim.x;
+    if (idx < cf_n)
+    {
+        keys[idx] = row_indeces[frontier[idx]];
     }
 }
 __global__ void initZero(int *array, int N)
@@ -155,12 +157,13 @@ void cubExclusiveScan(int *d_in, int *d_out, size_t temp_storage_bytes, void *d_
     cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
     cudaDeviceSynchronize();
 }
-void sortSpatialLocality(int* frontier,int* row_indices, int* vkeep,int* vprekeep,int* ogfrontier, size_t temp_storage_bytes, void *d_temp_storage, int cf_n ){
-    int block = (cf_n + THREADSPERBLOCK - 1)/THREADSPERBLOCK; 
-    getKeys<<<block,THREADSPERBLOCK>>>(frontier,row_indices,vkeep,cf_n); 
-    cub::DeviceRadixSort::SortPairs(d_temp_storage,temp_storage_bytes,vkeep,vprekeep,frontier,ogfrontier,cf_n,0,sizeof(int)*8); 
-    swap(frontier,ogfrontier); 
-    cudaDeviceSynchronize(); 
+void sortSpatialLocality(int *frontier, int *row_indices, int *vkeep, int *vprekeep, int *ogfrontier, size_t temp_storage_bytes, void *d_temp_storage, int cf_n)
+{
+    int block = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
+    getKeys<<<block, THREADSPERBLOCK>>>(frontier, row_indices, vkeep, cf_n);
+    cub::DeviceRadixSort::SortPairs(d_temp_storage, temp_storage_bytes, vkeep, vprekeep, frontier, ogfrontier, cf_n, 0, sizeof(int) * 8);
+    swap(frontier, ogfrontier);
+    cudaDeviceSynchronize();
 }
 //========================================================================================================
 // PUSH ADVANCE KERNEL
@@ -176,7 +179,7 @@ __global__ void Advance_push(int *current_frontier,
     if (idx < nothreads)
     {
         // Advance_push — same fix, using edges/nothreads
-        __shared__ int localOutgoingFrontier[EDGESPERTHREAD*THREADSPERBLOCK]; 
+        __shared__ int localOutgoingFrontier[EDGESPERTHREAD * THREADSPERBLOCK];
         int start = (idx == 0) ? 0 : (int)floor(idx * ((double)edges / nothreads));
         int end = (idx == nothreads - 1) ? edges : (int)floor((idx + 1) * ((double)edges / nothreads));
         int bstart = 0;
@@ -195,13 +198,13 @@ __global__ void Advance_push(int *current_frontier,
         int degree = next_ps - prefix_sum[bstart];
         int colIndex = row_indices[current_frontier[bstart]] + offset;
         int counter = 0;
-        int counter2 = 0 ; 
+        int counter2 = 0;
         for (int i = start; i < end; i++)
         {
-            localOutgoingFrontier[threadIdx.x*EDGESPERTHREAD + counter2] = col[colIndex];
+            localOutgoingFrontier[threadIdx.x * EDGESPERTHREAD + counter2] = col[colIndex];
             colIndex++;
             counter++;
-            counter2++; 
+            counter2++;
             if (counter >= degree - offset)
             {
                 bstart++;
@@ -220,10 +223,11 @@ __global__ void Advance_push(int *current_frontier,
                 offset = 0;
             }
         }
-        __syncthreads(); 
-        counter2 = 0 ; 
-        for(int i = start ; i<end; i++){
-            outgoing_frontier[i] = localOutgoingFrontier[threadIdx.x*EDGESPERTHREAD + counter2]; 
+        __syncthreads();
+        counter2 = 0;
+        for (int i = start; i < end; i++)
+        {
+            outgoing_frontier[i] = localOutgoingFrontier[threadIdx.x * EDGESPERTHREAD + counter2];
             counter2++;
         }
     }
@@ -289,7 +293,7 @@ __global__ void Advance_pull(int *unvisited_frontier, int *prefix_sum,
                 }
             }
         }
-    } 
+    }
 }
 //========================================================================================================
 // FILTER KERNEL
@@ -361,7 +365,7 @@ int advancePush(int *d_current_frontier, int *d_outgoing_frontier, int *d_col, i
     int totalThreads = (number_of_edges + EDGESPERTHREAD - 1) / EDGESPERTHREAD;
     int grid = (totalThreads + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     Advance_push<<<grid, THREADSPERBLOCK>>>(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, number_of_edges, totalThreads, cf_n);
-    grid = (number_of_edges+THREADSPERBLOCK-1)/THREADSPERBLOCK; 
+    grid = (number_of_edges + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     filterBefore<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, number_of_edges, d_visited, d_keep);
     cf_n = getNumberEdges(d_keep, d_prekeep, temp_storage_bytes, d_temp_storage, number_of_edges);
     filterAfter<<<grid, THREADSPERBLOCK>>>(d_outgoing_frontier, d_current_frontier, number_of_edges, d_prekeep, d_keep);
@@ -372,7 +376,7 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
                 uint32_t *visited, int *vkeep, int *prefix_vkeep, uint32_t *d_pull_currentF, size_t temp_storage_bytes,
                 void *d_temp_storage, int E, int V, int cf_n)
 {
-    
+
     int num_words = (V + 31) / 32;
     int blocks = (num_words + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     initZeroBitmap<<<blocks, THREADSPERBLOCK>>>(d_pull_currentF, num_words); // ##
@@ -382,7 +386,7 @@ int advancePull(int *d_csc_col_ptr, int *d_csc_row_idx, int *current_frontier, i
     generate_frontier<<<blockv, THREADSPERBLOCK>>>(vkeep, prefix_vkeep, V, unvisited_frontier);
     int block = (cf_n + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     generate_frontier_bitmap<<<block, THREADSPERBLOCK>>>(current_frontier, d_pull_currentF, V, cf_n); // ##
-    // sortSpatialLocality(unvisited_frontier,d_csc_col_ptr,vkeep,prefix_vkeep,current_frontier,temp_storage_bytes,d_temp_storage,cf_n); 
+    // sortSpatialLocality(unvisited_frontier,d_csc_col_ptr,vkeep,prefix_vkeep,current_frontier,temp_storage_bytes,d_temp_storage,cf_n);
     block = (noUnvisit + THREADSPERBLOCK - 1) / THREADSPERBLOCK;
     getDegree<<<block, THREADSPERBLOCK>>>(unvisited_frontier, d_csc_col_ptr, vkeep, noUnvisit, V, E);
     int number_of_edges = getNumberEdges(vkeep, prefix_vkeep, temp_storage_bytes, d_temp_storage, noUnvisit);
@@ -429,7 +433,6 @@ int main()
 {
     int E, V, Source_node;
     cin >> E >> V >> Source_node;
-
     // ---------------- CPU ----------------
     int *h_col = new int[E];
     int *h_keep = new int[E];
@@ -528,7 +531,7 @@ int main()
     while (cf_n > 0)
     {
         numberVisited += cf_n;
-        unvisited = V - numberVisited; // number of unvisited frontier.
+        unvisited = V - numberVisited;                                                    // number of unvisited frontier.
         m_f = cf_n * ((double)E / V);                                                     // number of edges in the current frontier (number of edges to check in averge) for push operation;
         m_u = (numberVisited == 0) ? INT_MAX : (unvisited * ((double)V / numberVisited)); // avg number to check in pull operation
 
@@ -559,7 +562,7 @@ int main()
 
         if (direction == PUSH)
         {
-            // sortSpatialLocality(d_current_frontier,d_row_indices,d_vkeep,d_vprekeep,d_outgoing_frontier,temp_storage_bytes,d_temp_storage,cf_n); 
+            // sortSpatialLocality(d_current_frontier,d_row_indices,d_vkeep,d_vprekeep,d_outgoing_frontier,temp_storage_bytes,d_temp_storage,cf_n);
             cf_n = advancePush(d_current_frontier, d_outgoing_frontier, d_col, d_row_indices, d_degree_array, d_visited, d_keep, d_prekeep, d_temp_storage, temp_storage_bytes, cf_n, V, E);
         }
         else if (direction == PULL)
@@ -575,7 +578,6 @@ int main()
     }
 
     clock_t enddd = clock();
-    printf("Time Taken (GPU): %f ms\n", (((double)enddd - (double)starttt) / CLOCKS_PER_SEC) * 1000);
 
     //==========================================================
     // Copy back for testing
@@ -593,9 +595,20 @@ int main()
 
     cout << "\nDistance Array last 20:\n";
 
-    for (int i = V-21; i < V; i++)
+    for (int i = V - 21; i < V; i++)
         cout << h_distance[i] << " ";
-    cout << endl;
+    int maxi = INT_MIN;
+    for (int i = 0; i < V; i++)
+    {
+        maxi = max(maxi, h_distance[i]);
+    }
+    cout<<endl; 
+    cout<<"#########BFS GUNROCK########"<<endl; 
+    cout << "vertices           : " << V << '\n';
+    cout << "edges              : " << E << '\n';
+    cout << "source             : " << Source_node << endl;
+    cout << "Max Distance       : " << maxi << endl;
+    printf("Time Taken (GPU)   : %f ms\n", (((double)enddd - (double)starttt) / CLOCKS_PER_SEC) * 1000);
 
     //==========================================================
     // Cleanup
@@ -645,16 +658,14 @@ int main()
 0 3 5 7 10 11 13 15 16 18
 */
 
-
-// the bugs were 1 instead of 1u -> even in my lifetime, i wouldn't have figured it out. 
-// grid size error in push 
+// the bugs were 1 instead of 1u -> even in my lifetime, i wouldn't have figured it out.
+// grid size error in push
 // CUB space error
 //// idk if they were proper or not
-// floor issue 
+// floor issue
 // 0 degree error
-
 
 /*
 Optimization 1: In Push filterBefore generate_unvisited_bitmap getDegree , instead of writing directly into the outgoing forntier, we can first push to __shared__memory and then to global. (i hope you remeber your convulution optimization)
-Optimization 2: Memory coalesing. I think it will require pre scanning.     
+Optimization 2: Memory coalesing. I think it will require pre scanning.
 */

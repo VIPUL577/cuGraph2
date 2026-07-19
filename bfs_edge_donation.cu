@@ -10,8 +10,8 @@
 #include <cub/cub.cuh>
 
 static const int BLOCK_SIZE       = 256;
-static const int EDGES_PER_THREAD = 8;
-static const int TILE_EDGES       = BLOCK_SIZE * EDGES_PER_THREAD;
+static const int EDGESPERTHREAD = 8;
+static const int TILE_EDGES       = BLOCK_SIZE * EDGESPERTHREAD;
 static const int DONATION_SLOTS   = 64;
 static const int INF_DIST         = 0x7FFFFFFF;
 
@@ -77,8 +77,8 @@ __global__ void bfs_edge_kernel(const Edge *edges, int E, int *dist,
     }
     __syncthreads();
 
-    int lo = threadIdx.x * EDGES_PER_THREAD;
-    int hi = lo + EDGES_PER_THREAD;
+    int lo = threadIdx.x * EDGESPERTHREAD;
+    int hi = lo + EDGESPERTHREAD;
     if (lo > tile_size) lo = tile_size;
     if (hi > tile_size) hi = tile_size;
 
@@ -146,33 +146,14 @@ __global__ void bfs_edge_kernel(const Edge *edges, int E, int *dist,
         atomicAdd(frontier_count, block_found);
 }
 
-static void cpu_bfs(int V, const std::vector<int> &row, const std::vector<int> &col,
-                    int source, std::vector<int> &dist)
-{
-    dist.assign((size_t)V, INF_DIST);
-    dist[(size_t)source] = 0;
-    std::queue<int> q;
-    q.push(source);
-    while (!q.empty()) {
-        int v = q.front();
-        q.pop();
-        for (int j = row[(size_t)v]; j < row[(size_t)v + 1]; ++j) {
-            int u = col[(size_t)j];
-            if (dist[(size_t)u] == INF_DIST) {
-                dist[(size_t)u] = dist[(size_t)v] + 1;
-                q.push(u);
-            }
-        }
-    }
-}
 
 int main(int argc, char **argv)
 {
     std::ios_base::sync_with_stdio(false);
     std::cin.tie(nullptr);
 
-    int V = 0, E = 0;
-    if (!(std::cin >> V >> E) || V <= 0 || E <= 0) {
+    int V = 0, E = 0,source = 0 ;
+    if (!(std::cin >> E >> V>>source) || V <= 0 || E <= 0) {
         std::cerr << "invalid header\n";
         return EXIT_FAILURE;
     }
@@ -212,12 +193,7 @@ int main(int argc, char **argv)
             edge_list[(size_t)j].dst = col[(size_t)j];
         }
 
-    // int source = (argc >= 2) ? std::atoi(argv[1]) : 0;
-    int source = 5;
-    if (source < 0 || source >= V) {
-        std::cerr << "source " << source << " out of range\n";
-        return EXIT_FAILURE;
-    }
+
 
     int words = (V + 31) / 32;
 
@@ -242,14 +218,11 @@ int main(int argc, char **argv)
 
     int num_tiles = (E + TILE_EDGES - 1) / TILE_EDGES;
 
-    cudaEvent_t t0, t1;
-    cudaEventCreate(&t0);
-    cudaEventCreate(&t1);
-    cudaEventRecord(t0);
-
     int level      = 0;
     int iterations = 0;
     int h_count    = 0;
+    clock_t starttt = clock();
+
     for (;;) {
         cudaMemsetAsync(d_next, 0, sizeof(unsigned int) * (size_t)words);
         cudaMemsetAsync(d_count, 0, sizeof(int));
@@ -266,47 +239,33 @@ int main(int argc, char **argv)
         d_next = tmp;
         ++level;
     }
-
-    cudaEventRecord(t1);
-    cudaEventSynchronize(t1);
-    float ms = 0.0f;
-    cudaEventElapsedTime(&ms, t0, t1);
-
+    clock_t enddd = clock();
+    
+    
+    
+    
     std::vector<int> gpu_dist((size_t)V);
     cudaMemcpy(gpu_dist.data(), d_dist, sizeof(int) * (size_t)V,
-               cudaMemcpyDeviceToHost);
-
-    std::vector<int> ref_dist;
-    cpu_bfs(V, row, col, source, ref_dist);
-
-    long long visited    = 0;
+    cudaMemcpyDeviceToHost);
+ 
+    
     int       max_level  = 0;
     int       mismatches = 0;
     for (int v = 0; v < V; ++v) {
-        if (gpu_dist[(size_t)v] != ref_dist[(size_t)v]) ++mismatches;
         if (gpu_dist[(size_t)v] != INF_DIST) {
-            ++visited;
             if (gpu_dist[(size_t)v] > max_level) max_level = gpu_dist[(size_t)v];
         }
     }
 
+    std::cout<<"#########BFS DONATION BOX########"<<std::endl; 
+    
     std::cout << "vertices           : " << V << '\n';
     std::cout << "edges              : " << E << '\n';
     std::cout << "source             : " << source << '\n';
-    std::cout << "iterations         : " << iterations << '\n';
-    std::cout << "visited            : " << visited << '\n';
     std::cout << "max distance       : " << max_level << '\n';
-    std::cout << std::fixed << std::setprecision(3);
-    std::cout << "kernel time (ms)   : " << ms << '\n';
-    std::cout << "MTEPS              : "
-              << ((ms > 0.0f) ? ((double)E * (double)iterations / ((double)ms * 1000.0)) : 0.0)
-              << '\n';
-    std::cout << "verification       : " << ((mismatches == 0) ? "PASS" : "FAIL") << '\n';
-    if (mismatches != 0)
-        std::cout << "mismatches         : " << mismatches << '\n';
+    printf(      "Time Taken (GPU)   : %f ms\n", (((double)enddd - (double)starttt) / CLOCKS_PER_SEC) * 1000);
 
-    cudaEventDestroy(t0);
-    cudaEventDestroy(t1);
+
     cudaFree(d_edges);
     cudaFree(d_dist);
     cudaFree(d_cur);
