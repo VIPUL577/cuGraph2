@@ -186,7 +186,8 @@ int main()
     int *h_distance = new int[V];
     int *h_row_indices = new int[V];
     int *h_current_frontier = new int[V];
-    memset(h_distance, INF, V * sizeof(int));
+    // memset(h_distance, INF, V * sizeof(int));
+    fill(h_distance, h_distance + V, INF);
     input_array(h_col, E);
     input_array(h_weight, E);
     input_array(h_row_indices, V);
@@ -276,7 +277,7 @@ int main()
         maxi = max(maxi, h_distance[i]);
     }
     cout << endl;
-    cout << "#########BFS GUNROCK########" << endl;
+    cout << "#########SSSP GUNROCK########" << endl;
     cout << "vertices           : " << V << '\n';
     cout << "edges              : " << E << '\n';
     cout << "source             : " << Source_node << endl;

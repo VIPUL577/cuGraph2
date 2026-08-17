@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for file in graphs_bfs/*_csr.txt; do
+for file in graphs_sssp/*_csr.txt; do
     echo "========================================"
     echo "Running on: $(basename "$file")"
     echo "========================================"
