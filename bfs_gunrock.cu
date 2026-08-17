@@ -353,7 +353,9 @@ void input_array(int *array, int n)
         cin >> array[i];
     }
 }
-
+//========================================================================================================
+// Wrapper Functions CPU
+//========================================================================================================
 int advancePush(int *d_current_frontier, int *d_outgoing_frontier, int *d_col, int *d_row_indices, int *d_degree_array,
                 uint32_t *d_visited, int *d_keep, int *d_prekeep, void *d_temp_storage, size_t temp_storage_bytes, int cf_n,
                 int V, int E)
