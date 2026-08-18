@@ -10,7 +10,7 @@ FOR PULL MODE.
 #include <bits/stdc++.h>
 #include <iostream>
 #include <cub/cub.cuh> // -> for prefix sum
-#define EDGESPERTHREAD 4
+#define EDGESPERTHREAD 2
 #define THREADSPERBLOCK 256
 #define INF INT_MAX
 using namespace std;
