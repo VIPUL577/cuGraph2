@@ -1,6 +1,5 @@
 /*
-THE INPUT OF THE GRAPH WILL BE IN CSR FORMAT. THERE WILL BE A HELPER KERNEL TO CONVERT IT TO CSC AND BITMAP
-FOR PULL MODE.
+THE INPUT OF THE GRAPH WILL BE IN CSR FORMAT.
 */
 #include <time.h>
 #include <stdio.h>
@@ -69,7 +68,6 @@ __global__ void generate_frontier(int *vkeep, int *prefix_vkeep, int KV, int *un
 void cubExclusiveScan(int *d_in, int *d_out, size_t temp_storage_bytes, void *d_temp_storage, int N)
 { 
     cub::DeviceScan::ExclusiveSum(d_temp_storage, temp_storage_bytes, d_in, d_out, N);
-    cudaDeviceSynchronize();
 }
 
 //========================================================================================================
@@ -170,7 +168,6 @@ void input_array(int *array, int n)
         cin >> array[i];
     }
 }
-
 //========================================================================================================
 // Wrapper Functions CPU
 //========================================================================================================
@@ -244,10 +241,12 @@ int main()
     int *d_vprekeep;
     int *d_distance;
 
+    // O(6*K*V+2E) -> space complexity on DRAM.
+
+
     cudaMalloc(&d_row_indices, V * sizeof(int)); 
     cudaMalloc(&d_col, E * sizeof(int));
     cudaMalloc(&d_weight, E * sizeof(int));
-    
     cudaMalloc(&d_distance, K * V * sizeof(int));
     cudaMalloc(&d_current_frontier, K * V * sizeof(int));
     cudaMalloc(&d_degree_array, K * V * sizeof(int));
